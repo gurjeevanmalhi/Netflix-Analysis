@@ -13,23 +13,43 @@ from netflix_titles
 group by type;
 
 -- 2. Find the most common rating for movies and TV shows  
+select
+    type,
+    rating
+from
+
+(
+    select
+        type,
+        rating,
+        count(*) as rating_count,
+        rank() over(partition by type order by count(*)desc) as ranking
+    from netflix_titles
+    group by
+        type,
+        rating
+
+) as t1 
+where ranking = 1;
 
 -- 3. List all movies released in a specific year (e.g., 2020)
 
 select title
 from netflix_titles
-where release_year = '2020';
+where
+    type = 'Movie'
+    and release_year = '2020';
 
 -- 4. Find the top 5 countries with the most content on Netflix
 
 select top 5
     c2.country_name,
-    count(show_id) as content_amt
+    count(show_id) as total_content
 from show_country as c1
 join countries as c2
     on c1.country_id = c2.country_id
 group by c2.country_name
-order by content_amt desc;
+order by total_content desc;
 
 -- 5. Identify the longest movie
 
@@ -39,6 +59,10 @@ where type = 'Movie'
 order by duration_value desc;
 
 -- 6. Find content added in the last 5 years 
+
+select title, date_added
+from netflix_titles
+where date_added >= dateadd(year,-5,getdate());
 
 -- 7. Find all the movies/TV shows by director 'Rajiv Chilaka'!
 
@@ -56,7 +80,7 @@ where type = 'TV Show' and duration_value > 5;
 
 select
     g.genre_name,
-    count(show_id) as content_per_genre
+    count(show_id) as total_content_per_genre
 from genre as g 
 join show_genre as sg
     on g.genre_id = sg.genre_id
@@ -128,6 +152,84 @@ from(
         cl.cast_member,
         c2.country_name
     ) as top_cast_subquery
-order by num_of_shows;
+order by num_of_shows desc;
 
-from show_cast;
+-- 15. Find the top 3 countries that have the highest number of TV Shows added to Netflix in the last 20 years.
+
+select top 3 country_name
+from
+
+(
+    select
+        sc.country_id,
+        c.country_name,
+        count(sc.show_id) as num_of_movies
+    from show_country as sc 
+    join countries as c 
+        on sc.country_id = c.country_id
+    join netflix_titles as nt 
+        on sc.show_id = nt.show_id
+    where
+        type = 'Movie'
+        and date_added >= dateadd(year,-20,getdate())
+    group by
+        sc.country_id,
+        c.country_name
+
+) as t2
+order by num_of_movies desc;
+
+-- 16. List the top 5 directors with the most titles on Netflix, but exclude any null or empty values
+
+select top 5
+    director,
+    count(show_id) as total_titles
+from netflix_titles
+where director <> 'Unknown' -- replaced null and empty values with 'Unknown' in cleaning stage
+    and title <> 'Unknown' -- replaced null and empty values with 'Unknown' in cleaning stage
+group by director
+order by total_titles desc;
+
+-- 17. Find the average duration (in minutes) of all Movies released after 2015. Ignore any non-Movie entries.
+
+select
+    type,
+    avg(duration_value) as avg_duration
+from netflix_titles
+where type = 'Movie'
+    and date_added > '2015-01-01' -- converting date into string 
+group by type;
+
+-- 18. For each year, count how many new titles were added to Netflix, and show only years where more than 100 titles were added. Order by year descending.
+
+select
+    year(date_added) as year_added,
+    count(show_id) as total_titles
+from netflix_titles
+where date_added is not null 
+group by year(date_added)
+having count(show_id) > 100
+order by total_titles desc;
+
+-- 19. Find all titles that appear in more than one genre and group them by the number of genres.
+
+select
+    total_genres,
+    count(distinct title) as titles_in_multiple_genres
+from(
+
+    select
+        nt.title,
+        count(distinct g.genre_name) as total_genres
+    from show_genre as sg 
+    join netflix_titles as nt
+        on sg.show_id = nt.show_id
+    join genre as g 
+        on sg.genre_id = g.genre_id
+    group by nt.title
+    having count(distinct g.genre_name) > 1
+
+    ) as t3
+group by total_genres
+order by total_genres desc;
+

@@ -1,9 +1,5 @@
 -- Business Problems and Solutions
 
--- Notes
-
--- null, blanks, 0, or unknown in title, director, date_added, rating, duration_value, duration_type 
-
 -- 1. Count the number of Movies vs TV Shows 
 
 select

@@ -1,173 +1,149 @@
--- Data Cleaning
+-- Handle Invalid, Inconsistent Data First
+-- Handle Missing Data Second
+-- Handle Duplicated Third
+-- Column By Column
 
--- Replacing NULL and blanks with "Unknown"
-
-update netflix_titles
-set 
-    director = case 
-        when director is null or trim(director) = ' ' then 'Unknown'
-        else director
-        end,
-    casts = case 
-        when casts is null or trim(casts)= ' ' then 'Unknown'
-        else casts 
-        end,
-    country = case 
-        when country is null or trim(country) = ' ' then 'Unknown'
-        else country
-        end,
-    rating = case 
-        when rating is null or trim(rating) = ' ' then 'Unknown'
-        else rating
-        end,
-    duration = case 
-        when duration is null or trim(duration) = ' ' then 'Unknown'
-        else duration
-        end,
-    listed_in = case 
-        when listed_in is null or trim(listed_in) = ' ' then 'Unknown'
-        else listed_in
-        end,
-    title_description = case 
-        when title_description is null or trim(title_description) = ' ' then 'Unknown'
-        else title_description
-        end;
-    
-
--- Normalization
-
--- Creating casts table
-
-create table cast_list(
-    cast_id int primary key identity(1,1),
-    cast_member nvarchar(255)
+-- Created Staging Table
+CREATE TABLE titles_staging (
+	show_id VARCHAR(10),
+	category VARCHAR(10),
+	title VARCHAR(150),
+	director VARCHAR(250),
+	casts VARCHAR(800),
+	country VARCHAR(150),
+	date_added VARCHAR(50),
+	release_year VARCHAR(10),
+	rating VARCHAR(20),
+	duration VARCHAR(20),
+	listed_in VARCHAR(100),
+	description VARCHAR(300)
 );
 
--- Insert into cast table
-
-insert into cast_list(cast_member)
-select distinct trim(split_cast.value)
-from netflix_titles
-cross apply string_split(casts,',') as split_cast
-where casts <> 'Unknown';
-
--- Creating junction table (show-cast relationship)
-
-create table show_cast(
-    show_id nvarchar(10),
-    cast_id int,
-    foreign key (show_id) references netflix_titles(show_id),
-    foreign key (cast_id) references cast_list(cast_id)
-);
-
--- Insert into show_cast
-
-insert into show_cast(show_id,cast_id)
+-- Identifying NULLs
 select
-    nt.show_id,
-    c.cast_id
-from netflix_titles as nt
-cross apply string_split(casts,',') as cast_member_split
-join cast_list as c 
-    on trim(cast_member_split.value) = c.cast_member;
+	count(*) filter(where show_id is null) as show_id,
+	count(*) filter(where category is null) as category,
+	count(*) filter(where title is null) as title,
+	count(*) filter(where director is null) as director, -- 2,634
+	count(*) filter(where casts is null) as casts, -- 825
+	count(*) filter(where country is null) as country, -- 831
+	count(*) filter(where date_added is null) as date_added, - 10
+	count(*) filter(where release_year is null) as release_year,
+	count(*) filter(where rating is null) as rating, -- 4
+	count(*) filter(where duration is null) as duration, -- 3 
+	count(*) filter(where listed_in is null) as listed_in,
+	count(*) filter(where description is null) as description
+from titles_staging;
 
--- Creating countries table table
+-- Detecting Invalid Data
 
-create table countries(
-    country_id int primary key identity (1,1),
-    country_name varchar(50)
-);
+select distinct director
+from titles_staging
+WHERE director SIMILAR TO '%[0-9!@#$%^&*()]%'
+or director not similar to '%[A-Za-z\s.,-ÁÉÍÓÚáéíóú]%' 
+and director is not null;
+-- Observation: valid
 
+select distinct category
+from titles_staging;
+-- Observation: 2 categories exist, both are valid.
 
--- Insert into countries table (see view windows query for cleaning syntax)
+select distinct title
+from titles_staging
+where title similar to '%[@#$%^*()]%';
 
-insert into countries(country_name)
-select distinct clean_country
-from vw_clean_countries;
+-- Observation: movie titles can be dynamic and include special characters, digits, etc.
+-- All titles appear valid, we will leave these in the dataset as is.
 
--- Creating junction table (show_country relationship)
+select distinct cast_member
+from(
+	select trim(regexp_split_to_table(casts,', ')) as cast_member
+	from titles_staging
+) as sub
+where cast_member similar to '%[0-9!@#$%^&*()]%'
+or cast_member not similar to '%[A-Za-z\s.,-ÁÉÍÓÚáéíóú]%';
+-- Observation: valid
 
-create table show_country(
-    show_id nvarchar(10),
-    country_id int,
-    foreign key (show_id) references netflix_titles(show_id),
-    foreign key (country_id) references countries(country_id)
-);
+select distinct country
+from(
+	select trim(regexp_split_to_table(country,', ')) as country
+	from titles_staging
+) as sub
+where country not similar to '%[A-Za-z]%';
+-- Observation: valid
 
--- Insert into show_country
-
-insert into show_country(show_id, country_id)
 select
-    vwc.show_id,
-    c2.country_id
-from vw_clean_countries as vwc
-join countries as c2 
-    on vwc.clean_country = c2.country_name;
+	show_id,
+	date_added
+from titles_staging
+where date_added not similar to '[0-9]?[0-9]-[A-Za-z][a-z][A-Za-z]-[0-9]{2}'
+order by 1 asc;
+--Observation: valid. Will format all dates later in project.
 
--- Creating genres table
-
-create table genre(
-    genre_id int primary key identity (1,1),
-    genre_name nvarchar(50)
-);
--- Insert into genre table
-
-insert into genre(genre_name)
 select
-    distinct clean_genre
-from vw_clean_genres;
+	distinct release_year
+from titles_staging
+where release_year not similar to '[0-9]{4}';
+-- Observation: valid
 
--- Creating junction table (show-genre relationship)
-
-create table show_genre(
-    show_id nvarchar(10),
-    genre_id int
-    foreign key (show_id) references netflix_titles (show_id),
-    foreign key (genre_id) references genre(genre_id)
+update titles_staging 
+set duration = rating, -- updating duration column with correct values
+	rating = null -- updating rating as null
+where rating in (
+		select rating -- this query finds 3 invalid values in rating, should be in duration column
+		from titles_staging
+		order by rating
+		limit 3
 );
 
--- Inserting into show_genre (see view windows query for cleaning syntax)
+select distinct trim(regexp_split_to_table(listed_in,', ')) as listed_in
+from titles_staging
+order by 1;
+-- Observation: valid
 
-insert into show_genre(show_id, genre_id)
+
+
+
+
+
+
+
+/*-- Identifying Duplicates, No Exact Duplicates Found
 select
-    vw.show_id,
-    g.genre_id
-from vw_clean_genres as vw
-join genre as g 
-    on vw.clean_genre = g.genre_name;
+	category,
+	title,
+	director,
+	casts,
+	country,
+	date_added,
+	release_year,
+	rating,
+	duration,
+	listed_in,
+	description
+from titles_staging
+group by
+	category,
+	title,
+	director,
+	casts,
+	country,
+	date_added,
+	release_year,
+	rating,
+	duration,
+	listed_in,
+	description
+having count(*) > 1;
+*/
 
----- Creating columns to normalize duration
+	
 
-alter table netflix_titles
-add
-    duration_value int,
-    duration_type nvarchar(20);
 
--- Extract from duration and update into duration value and duration type
 
-update netflix_titles
-set 
-    duration_value = left(duration,CHARINDEX(' ',duration, -1)), -- finds position before space and returns all string to the left
-    duration_type =right(duration,LEN(duration) - CHARINDEX(' ',duration)); -- subtracts position of space from total string length and returns all string to the right
 
--- Normalizing strings for duration type
 
-update netflix_titles
-set 
-    duration_type = case 
-        when duration_type like '%min%' then 'minute'
-        when duration_type like '%seas%' then 'season'
-        else duration_type
-        end;
 
--- Removing columns from netflix table
-
-alter table netflix_titles
-drop column 
-    casts,
-    country,
-    duration,
-    listed_in;
 
 
 
